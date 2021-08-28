@@ -17,6 +17,7 @@ __all__ = (
     'cancel_coroutine',
     'get_scheduler',
     'run_forever',
+    'set_timeout',
     'AsyncFuture',
     'sleep'
 )
@@ -75,13 +76,24 @@ class AsyncFuture:
         future = cls.future_pool.submit(task, *args, **kwargs)
         return AsyncFuture(future)
 
-async def sleep(delay):
+async def sleep_old(delay):
     try:
         deadline = time.time() + delay
         while time.time() < deadline:
             await YieldProxy((None, StopObject.sleep))
     except CancelCoroutine:
         raise
+
+async def sleep(delay):
+    try:
+        deadline = time.time() + delay
+        await YieldProxy((deadline, StopObject.sleep))
+    except CancelCoroutine:
+        raise
+
+def set_timeout(timeout):
+    sched = get_scheduler()
+    sched.set_timeout(timeout)
 
 def _prepare_headers() -> List[BaseHandler]:
     handlers = [

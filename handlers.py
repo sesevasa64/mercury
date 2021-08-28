@@ -1,15 +1,16 @@
+import time
 from enum import Enum
 from select import select
-from socket import socket
+from queue import PriorityQueue
+from .coro_proxy import CoroProxy
 from concurrent.futures import Future
 from .base_handler import BaseHandler, StopObject
 from .base_scheduler import BaseScheduler
-from .yield_proxy import YieldProxy
+from typing import List
 
 __all__ = (
     'SocketEvent', 'SocketProxy', 'SocketHandler',
-    'FutureHandler', 'SleepHandler', 'AsyncSocket',
-    'WindowsInputHandler'
+    'FutureHandler', 'SleepHandler', 'WindowsInputHandler'
 )
 
 BUFFER_SIZE = 256
@@ -29,6 +30,7 @@ class SocketHandler(BaseHandler):
         self._select_timeout = 0.01
         self.recv_wait = {}
         self.send_wait = {}
+        self.dummy = []
         self.route = {
             SocketEvent.recv: self.recv_wait,
             SocketEvent.send: self.send_wait,
@@ -37,7 +39,9 @@ class SocketHandler(BaseHandler):
         self.waiting_dict = self.route[socket.event]
         self.waiting_dict[socket.socket] = task
     def proceed(self):
-        can_recv, can_send, _ = select(self.recv_wait, self.send_wait, [], self._select_timeout)
+        if not self:
+            return time.sleep(self._select_timeout)
+        can_recv, can_send, _ = select(self.recv_wait, self.send_wait, self.dummy, self._select_timeout)
         for r in can_recv:
             self.scheduler.add_proxy(self.recv_wait.pop(r))
         for s in can_send:
@@ -46,6 +50,8 @@ class SocketHandler(BaseHandler):
         return any((self.recv_wait, self.send_wait))
     def acceptable(self):
         return StopObject.socket
+    def set_timeout(self, timeout):
+        self._select_timeout = timeout
 
 class FutureHandler(BaseHandler):
     def __init__(self, sched: BaseScheduler):
@@ -67,18 +73,29 @@ class FutureHandler(BaseHandler):
 class SleepHandler(BaseHandler):
     def __init__(self, sched: BaseScheduler):
         super().__init__(sched)
-        self.sleeping = []
-    def add_object(self, _, task):
-        self.sleeping.append(task)
+        self.sleeping = PriorityQueue()
+        self.counter = 0
+    def add_object(self, deadline, task):
+        self.sleeping.put_nowait((deadline, self.counter, task))
+        self.counter += 1
     def proceed(self):
-        for i in range(len(self.sleeping)):
-            task = self.sleeping[i]
+        for _ in range(self.sleeping.qsize()):
+            deadline, _, task = self.sleeping.queue[0]
+            if time.time() < deadline:
+                break
             self.scheduler.add_proxy(task)
-            self.sleeping.remove(task)
+            self.sleeping.get_nowait()
     def __bool__(self):
-        return False
+        return not self.sleeping.empty()
     def acceptable(self):
         return StopObject.sleep
+    def cancel(self, proxy: CoroProxy):
+        sleeping_queue: List = self.sleeping.queue
+        r = filter(lambda i: i[2] == proxy, sleeping_queue)
+        try:
+            sleeping_queue.remove(next(r))
+        except StopIteration:
+            pass
 
 class WindowsInputHandler(BaseHandler):
     def __init__(self, sched: BaseScheduler):
@@ -107,25 +124,3 @@ class WindowsInputHandler(BaseHandler):
         return bool(self.waiting)
     def acceptable(self):
         return StopObject.winput
-
-class AsyncSocket:
-    def __init__(self, socket: socket):
-        self.socket = socket
-    async def send(self, bytes):
-        await YieldProxy((SocketProxy(self.socket, SocketEvent.send), StopObject.socket))
-        self.socket.send(bytes)
-    async def recv(self, buffer_size):
-        await YieldProxy((SocketProxy(self.socket, SocketEvent.recv), StopObject.socket))
-        return self.socket.recv(buffer_size)
-    async def accept(self):
-        await YieldProxy((SocketProxy(self.socket, SocketEvent.recv), StopObject.socket))
-        client, address = self.socket.accept()
-        return AsyncSocket(client), address
-    async def connect(self, address, port):
-        await YieldProxy((SocketProxy(self.socket, SocketEvent.send), StopObject.socket))
-        self.socket.connect((address, port))
-    def __getattr__(self, name: str):
-        return getattr(self.socket, name)
-    @classmethod
-    def create(cls, family=-1, type=-1, proto=-1, fileno=None):
-        return cls(socket(family, type, proto, fileno))

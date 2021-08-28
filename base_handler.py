@@ -1,4 +1,5 @@
 from enum import Enum
+from .coro_proxy import CoroProxy
 from .base_scheduler import BaseScheduler
 
 __all__ = ('StopObject', 'BaseHandler')
@@ -20,4 +21,6 @@ class BaseHandler:
     def __bool__(self):
         raise NotImplementedError()
     def acceptable(self):
+        raise NotImplementedError()
+    def cancel(self, proxy: CoroProxy):
         raise NotImplementedError()
