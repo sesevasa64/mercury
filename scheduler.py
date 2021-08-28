@@ -1,6 +1,6 @@
+from core.handlers import SocketHandler
 import logging
 from collections import deque
-from .handlers import SocketHandler
 from .base_handler import BaseHandler, StopObject
 from .coro_proxy import CoroProxy, SendProxy, CancelProxy
 from .base_scheduler import BaseScheduler, CancelCoroutine
@@ -39,20 +39,21 @@ class Scheduler(BaseScheduler):
         handler.set_timeout(timeout)
     def run_forever(self):
         while any((*self.handlers, self.tasks)): # always True
-            while not self.tasks:
-                for handler in self.handlers:
-                    handler.proceed()
-            task: CoroProxy = self.tasks.popleft()
-            task_name = task.getfullname()
-            try:
-                object, obj_type = task.resume()
-                handler = self.route[obj_type]
-                handler.add_object(object, task)
-            except KeyboardInterrupt:
-                raise
-            except StopIteration:
-                logging.debug(f"Core: Task {task_name} is done")
-            except CancelCoroutine:
-                logging.debug(f"Core: Task {task_name} canceled")
-            except BaseException:
-                logging.exception(f"Core: Unhandled exception in a {task_name} coroutine")
+            size = len(self.tasks)
+            for _ in range(size):
+                task: CoroProxy = self.tasks.popleft()
+                task_name = task.getfullname()
+                try:
+                    object, obj_type = task.resume()
+                    handler = self.route[obj_type]
+                    handler.add_object(object, task)
+                except KeyboardInterrupt:
+                    raise
+                except StopIteration:
+                    logging.debug(f"Core: Task {task_name} is done")
+                except CancelCoroutine:
+                    logging.debug(f"Core: Task {task_name} canceled")
+                except BaseException:
+                    logging.exception(f"Core: Unhandled exception in a {task_name} coroutine")
+            for handler in self.handlers:
+                handler.proceed()
