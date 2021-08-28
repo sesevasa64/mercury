@@ -1,6 +1,6 @@
-from core.handlers import SocketHandler
 import logging
 from collections import deque
+from .handlers import SocketHandler
 from .base_handler import BaseHandler, StopObject
 from .coro_proxy import CoroProxy, SendProxy, CancelProxy
 from .base_scheduler import BaseScheduler, CancelCoroutine
