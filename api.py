@@ -76,14 +76,6 @@ class AsyncFuture:
         future = cls.future_pool.submit(task, *args, **kwargs)
         return AsyncFuture(future)
 
-async def sleep_old(delay):
-    try:
-        deadline = time.time() + delay
-        while time.time() < deadline:
-            await YieldProxy((None, StopObject.sleep))
-    except CancelCoroutine:
-        raise
-
 async def sleep(delay):
     try:
         deadline = time.time() + delay
