@@ -13,6 +13,7 @@ class Scheduler(BaseScheduler):
         self.tasks: deque[CoroProxy] = deque()
         self.handlers: List[BaseHandler] = []
         self.route: Dict[StopObject, BaseHandler] = {}
+        self.stopped = {}
     def add_handler(self, cls):
         handler: BaseHandler = cls(self)
         self.handlers.append(handler)
@@ -23,20 +24,23 @@ class Scheduler(BaseScheduler):
     def add_coro(self, coro: Coroutine):
         self.tasks.append(SendProxy(coro))
     def cancel_coro(self, coro: Coroutine):
-        r = filter(lambda c: c == SendProxy(coro), self.tasks)
         proxy = SendProxy(coro)
         r = filter(lambda p: p == proxy, self.tasks)
         try:
             self.tasks.remove(next(r))
         except StopIteration:
-            handler = self.route[StopObject.sleep]
-            handler.cancel(proxy)
+            obj_type, object = self.stopped[proxy]
+            handler = self.route[obj_type]
+            handler.cancel(proxy, object)
+            self.resume(proxy)
         self.tasks.append(CancelProxy(coro))
     def add_proxy(self, proxy):
         self.tasks.append(proxy)
     def set_timeout(self, timeout):
         handler: SocketHandler = self.route[StopObject.socket]
         handler.set_timeout(timeout)
+    def resume(self, task):
+        self.stopped.pop(task)
     def run_forever(self):
         while any((*self.handlers, self.tasks)): # always True
             while not self.tasks:
@@ -48,6 +52,7 @@ class Scheduler(BaseScheduler):
                 object, obj_type = task.resume()
                 handler = self.route[obj_type]
                 handler.add_object(object, task)
+                self.stopped[task] = obj_type, object
             except KeyboardInterrupt:
                 raise
             except StopIteration:

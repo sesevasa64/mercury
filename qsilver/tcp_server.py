@@ -1,7 +1,7 @@
 from socket import *
 from typing import Coroutine
 from .async_socket import AsyncSocket
-from .api import add_coroutine
+from .api import add_coroutine, CancelCoroutine
 
 __all__ = (
     'BasicTCPServer',
@@ -19,6 +19,5 @@ class BasicTCPServer:
             while True:
                 client, address = await self.socket.accept()
                 add_coroutine(client_handler(client, address))
-        except KeyboardInterrupt:
-            pass
-        self.socket.socket.close()
+        except (KeyboardInterrupt, CancelCoroutine):
+            self.socket.socket.close()

@@ -12,6 +12,8 @@ class CoroProxy:
         return self.coro.__qualname__
     def resume():
         return NotImplementedError()
+    def __hash__(self) -> int:
+        return hash(self.coro)
 
 class SendProxy(CoroProxy):
     def __init__(self, coro: Coroutine):
