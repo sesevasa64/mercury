@@ -14,5 +14,7 @@ class BaseScheduler:
         raise NotImplementedError()
     def add_proxy(self, proxy):
         raise NotImplementedError()
+    def resume(self, proxy):
+        raise NotImplementedError()
     def run_forever(self):
         raise NotImplementedError()
