@@ -22,5 +22,7 @@ class BaseHandler:
         raise NotImplementedError()
     def acceptable(self):
         raise NotImplementedError()
-    def cancel(self, proxy: CoroProxy):
+    def cancel(self, proxy: CoroProxy, info):
+        raise NotImplementedError()
+    def cancel_all(self):
         raise NotImplementedError()

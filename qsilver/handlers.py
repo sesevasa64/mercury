@@ -1,12 +1,13 @@
 import time
 from enum import Enum
 from select import select
+from itertools import chain
 from queue import PriorityQueue
-from .coro_proxy import CoroProxy
+from .coro_proxy import CancelProxy, CoroProxy
 from concurrent.futures import Future
 from .base_handler import BaseHandler, StopObject
 from .base_scheduler import BaseScheduler
-from typing import List
+from typing import List, Tuple, Dict
 
 __all__ = (
     'SocketEvent', 'SocketProxy', 'SocketHandler',
@@ -38,14 +39,30 @@ class SocketHandler(BaseHandler):
     def add_object(self, socket: SocketProxy, task):
         self.waiting_dict = self.route[socket.event]
         self.waiting_dict[socket.socket] = task
+    def _helder(self, list: List, dict: Dict):
+        for i in list:
+            proxy = dict.pop(i)
+            self.scheduler.add_proxy(proxy)
+            self.scheduler.resume(proxy)
     def proceed(self):
         if not self:
             return time.sleep(self._select_timeout)
         can_recv, can_send, _ = select(self.recv_wait, self.send_wait, self.dummy, self._select_timeout)
-        for r in can_recv:
-            self.scheduler.add_proxy(self.recv_wait.pop(r))
-        for s in can_send:
-            self.scheduler.add_proxy(self.send_wait.pop(s))
+        self._helder(can_recv, self.recv_wait)
+        self._helder(can_send, self.send_wait)
+    def cancel(self, proxy, socket_proxy: SocketProxy):
+        socket, event = socket_proxy.socket, socket_proxy.event
+        if event is SocketEvent.recv:
+            self.recv_wait.pop(socket)
+        elif event is SocketEvent.send:
+            self.send_wait.pop(socket)
+        else:
+            raise ValueError("Unknow SocketEvent type!")
+    def cancel_all(self):
+        for task in chain(self.recv_wait.values(), self.send_wait.values()):
+            self.scheduler.add_proxy(CancelProxy(task.coro))
+        self.recv_wait.clear()
+        self.send_wait.clear()
     def __bool__(self):
         return any((self.recv_wait, self.send_wait))
     def acceptable(self):
@@ -58,13 +75,22 @@ class FutureHandler(BaseHandler):
         super().__init__(sched)
         self.future_wait = {}
     def add_object(self, future: Future, task):
-        def future_done(future):
-            task = self.future_wait.pop(future)
-            self.scheduler.add_proxy(task)
+        def future_done(future: Future):
+            if future in self.future_wait:
+                task = self.future_wait.pop(future)
+                self.scheduler.add_proxy(task)
         self.future_wait[future] = task
         future.add_done_callback(future_done)
     def proceed(self):
         pass
+    def cancel(self, proxy: CoroProxy, future: Future):
+        future.cancel()
+        self.future_wait.pop(future)
+        if not future.running():
+            raise Exception("unreachable code")
+    def cancel_all(self):
+        for future in self.future_wait.values():
+            self.cancel(None, future)
     def __bool__(self):
         return bool(self.future_wait)
     def acceptable(self):
@@ -84,23 +110,28 @@ class SleepHandler(BaseHandler):
             if time.time() < deadline:
                 break
             self.scheduler.add_proxy(task)
+            self.scheduler.resume(task)
             self.sleeping.get_nowait()
-    def __bool__(self):
-        return not self.sleeping.empty()
-    def acceptable(self):
-        return StopObject.sleep
-    def cancel(self, proxy: CoroProxy):
+    def cancel(self, proxy: CoroProxy, _):
         sleeping_queue: List = self.sleeping.queue
         r = filter(lambda i: i[2] == proxy, sleeping_queue)
         try:
             sleeping_queue.remove(next(r))
         except StopIteration:
             pass
+    def cancel_all(self):
+        for _, _, task in self.sleeping.queue:
+            self.scheduler.add_proxy(CancelProxy(task.coro))
+        self.sleeping = PriorityQueue()
+    def __bool__(self):
+        return not self.sleeping.empty()
+    def acceptable(self):
+        return StopObject.sleep
 
 class WindowsInputHandler(BaseHandler):
     def __init__(self, sched: BaseScheduler):
         super().__init__(sched)
-        self.waiting = []
+        self.waiting: List[Tuple[int, CoroProxy]] = []
     def add_object(self, handler, task):
         self.waiting.append((handler, task))
     def proceed(self):
@@ -119,7 +150,14 @@ class WindowsInputHandler(BaseHandler):
                     handle.ReadConsoleInput(1)
                     continue
                 self.scheduler.add_proxy(task)
+                self.scheduler.resume(task)
                 self.waiting.remove((handle, task))
+    def cancel(self, proxy: CoroProxy, handler):
+        self.waiting.remove((handler, proxy))
+    def cancel_all(self):
+        for _, task in self.waiting:
+            self.scheduler.add_proxy(CancelProxy(task.coro))
+        self.waiting.clear()
     def __bool__(self):
         return bool(self.waiting)
     def acceptable(self):

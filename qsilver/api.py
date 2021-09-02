@@ -17,6 +17,7 @@ __all__ = (
     'cancel_coroutine',
     'get_scheduler',
     'run_forever',
+    'terminate',
     'set_timeout',
     'AsyncFuture',
     'sleep'
@@ -52,6 +53,10 @@ def run_forever():
     sched = get_scheduler()
     sched.run_forever()
 
+def terminate():
+    sched = get_scheduler()
+    sched.terminate()
+
 def keyboard_interrupt(signum, frame):
     sys.exit(0)
 
@@ -75,14 +80,6 @@ class AsyncFuture:
     def from_pool(cls, task: Callable, *args, **kwargs):
         future = cls.future_pool.submit(task, *args, **kwargs)
         return AsyncFuture(future)
-
-async def sleep_old(delay):
-    try:
-        deadline = time.time() + delay
-        while time.time() < deadline:
-            await YieldProxy((None, StopObject.sleep))
-    except CancelCoroutine:
-        raise
 
 async def sleep(delay):
     try:
