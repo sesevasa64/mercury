@@ -112,6 +112,10 @@ class SleepHandler(BaseHandler):
             self.scheduler.add_proxy(task)
             self.scheduler.resume(task)
             self.sleeping.get_nowait()
+    def __bool__(self):
+        return not self.sleeping.empty()
+    def acceptable(self):
+        return StopObject.sleep
     def cancel(self, proxy: CoroProxy, _):
         sleeping_queue: List = self.sleeping.queue
         r = filter(lambda i: i[2] == proxy, sleeping_queue)
